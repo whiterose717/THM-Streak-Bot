@@ -1,0 +1,86 @@
+name: TryHackMe Streak Bot
+
+on:
+  schedule:
+    # Run daily at 4:30 PM Sri Lanka time (11:00 UTC)
+    - cron: '0 11 * * *'
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      force_new:
+        description: 'Force solving a new challenge (skip streak check)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      complete_room:
+        description: 'Room name to complete ALL questions (e.g. blue, ice, kenobi). Leave empty for random mode.'
+        required: false
+        default: ''
+      complete_random:
+        description: 'Pick a random uncompleted room and solve ALL questions'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  maintain-streak:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run THM Bot
+        id: streak_run
+        env:
+          THM_FIREFOX_COOKIES: ${{ secrets.THM_FIREFOX_COOKIES }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE_NEW: ${{ inputs.force_new || 'false' }}
+          COMPLETE_ROOM: ${{ inputs.complete_room || '' }}
+          COMPLETE_RANDOM: ${{ inputs.complete_random || 'false' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Wait 60s for Vercel rate limit cooldown on GitHub Actions IPs
+          echo "Waiting 60s for rate limit cooldown..."
+          sleep 60
+          if [ "$COMPLETE_RANDOM" = "true" ]; then
+            echo "Complete random mode: picking random uncompleted room"
+            timeout 10m python main.py --complete
+          elif [ -n "$COMPLETE_ROOM" ]; then
+            echo "Complete room mode: solving all questions in $COMPLETE_ROOM"
+            timeout 10m python main.py --complete "$COMPLETE_ROOM"
+          elif [ "$FORCE_NEW" = "true" ]; then
+            echo "Force new mode: will solve a new challenge"
+            timeout 10m python main.py --force-new
+          else
+            timeout 10m python main.py
+          fi
+          echo "status=success" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thm-bot-logs
+          path: logs/
+          retention-days: 7
